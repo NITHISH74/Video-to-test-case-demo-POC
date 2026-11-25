@@ -65,6 +65,8 @@ from schemas import (
     PromptContext,
     TestCase,
     TestSuite,
+    USER_INSTRUCTIONS_MAX_CHARS,
+    normalize_user_instructions,
 )
 
 APP_TITLE = "Video-to-Test-Case"
@@ -87,6 +89,7 @@ SS_EXPORTS = "export_payloads"
 SS_RETRYABLE = "last_error_retryable"
 SS_RETRY_NONCE = "retry_nonce"
 SS_STAGED_UPLOAD = "staged_upload"
+SS_USER_INSTRUCTIONS = "user_instructions"
 
 # ---------------------------------------------------------------------------
 # Session state helpers
@@ -101,6 +104,7 @@ def _init_state() -> None:
         SS_RETRYABLE: False,
         SS_RETRY_NONCE: 0,
         SS_STAGED_UPLOAD: None,
+        SS_USER_INSTRUCTIONS: "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -161,12 +165,14 @@ def _build_prompt_context(
     target_roles: str,
     output_focus: str,
     extra_notes: str,
+    user_instructions: str = "",
 ) -> PromptContext:
     return PromptContext(
         feature_name=feature_name.strip(),
         target_roles=target_roles.strip(),
         output_focus=output_focus if output_focus in OUTPUT_FOCUS_OPTIONS else DEFAULT_OUTPUT_FOCUS,
         extra_notes=extra_notes.strip(),
+        user_instructions=normalize_user_instructions(user_instructions),
     )
 
 
@@ -516,6 +522,105 @@ def _render_sidebar() -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
+# Workspace: optional instructions box (main canvas)
+# ---------------------------------------------------------------------------
+# Focus presets: one click writes a good-quality instruction instead of asking the
+# user to invent prompt language. Kept in sync with OUTPUT_FOCUS_OPTIONS but phrased
+# as instructions to the model.
+FOCUS_PRESETS: dict[str, str] = {
+    "Security": (
+        "Prioritise authentication, authorisation and data-exposure checks.\n"
+        "Cover role-based access boundaries and what a lower-privileged user must NOT see or do.\n"
+        "Include cases for session expiry and repeated failed attempts where the video supports it."
+    ),
+    "Error paths": (
+        "Prioritise negative and failure paths.\n"
+        "For every action shown, add the cases where it fails: empty input, invalid format, "
+        "network failure, duplicate submission and retry after failure."
+    ),
+    "Accessibility": (
+        "Add coverage for keyboard-only operation, focus order, visible focus indicators, "
+        "screen-reader labels on the fields and controls shown, and colour-contrast expectations.\n"
+        "Keep the UI element names exactly as they appear on screen."
+    ),
+    "Regression": (
+        "Focus on behaviour that could break when this feature changes.\n"
+        "Cover boundaries, default values, persistence after reload, and the existing flows "
+        "the demo touches."
+    ),
+}
+
+
+def _reset_instructions() -> None:
+    """Clear the box. Runs as an on_click callback, before the widget is created."""
+
+    st.session_state[SS_USER_INSTRUCTIONS] = ""
+
+
+def _apply_preset(preset_text: str) -> None:
+    """Fill the box from a focus preset. Runs before the widget is created."""
+
+    st.session_state[SS_USER_INSTRUCTIONS] = preset_text
+
+
+def _render_instructions_box(settings: Mapping[str, Any]) -> str:
+    """Render the optional free-text box above the Generate button.
+
+    Returns the normalised text. This is the single source of truth for the feature;
+    the sidebar keeps its own short fields for structure.
+    """
+
+    with st.expander("2. Add briefing or instructions (optional)", expanded=False):
+        st.caption(
+            "Anything you want the model to know or focus on. This is added to the prompt "
+            "as **guidance**, never as evidence - it cannot invent UI that is not in the video. "
+            f"Limit {USER_INSTRUCTIONS_MAX_CHARS} characters."
+        )
+        # Both controls write through on_click callbacks: Streamlit instantiates the
+        # text area in this same run, so mutating its key inline would raise
+        # StreamlitWidgetAlreadyInstantiatedError.
+        st.button(
+            "Clear",
+            key="clear_instructions",
+            disabled=not normalize_user_instructions(
+                st.session_state.get(SS_USER_INSTRUCTIONS, "")
+            ),
+            help="Empty the instruction box.",
+            on_click=_reset_instructions,
+        )
+        text = st.text_area(
+            "Instructions for test case generation",
+            key=SS_USER_INSTRUCTIONS,
+            height=140,
+            max_chars=USER_INSTRUCTIONS_MAX_CHARS,
+            placeholder=(
+                "e.g. Focus on the permission checks. Ignore the billing modal.\n"
+                "Call the side panel 'Risk Console'. The demo never shows the delete path."
+            ),
+            label_visibility="collapsed",
+        )
+        presets = st.columns(len(FOCUS_PRESETS))
+        for column, (name, preset_text) in zip(presets, FOCUS_PRESETS.items()):
+            with column:
+                st.button(
+                    name,
+                    key=f"preset_{name}",
+                    width="stretch",
+                    help=f"Fill the box with an {name.lower()} briefing.",
+                    on_click=_apply_preset,
+                    args=(preset_text,),
+                )
+
+        normalised = normalize_user_instructions(text)
+        used = len(normalised)
+        if used:
+            st.caption(f"{used} / {USER_INSTRUCTIONS_MAX_CHARS} characters - will be sent with the prompt.")
+        else:
+            st.caption("Empty - the prompt is unchanged.")
+    return normalize_user_instructions(st.session_state.get(SS_USER_INSTRUCTIONS, ""))
+
+
+# ---------------------------------------------------------------------------
 # Workspace: upload + preview
 # ---------------------------------------------------------------------------
 def _render_upload_workspace(settings: Mapping[str, Any]) -> Any:
@@ -529,18 +634,23 @@ def _render_upload_workspace(settings: Mapping[str, Any]) -> Any:
             key="video_uploader",
             help="Supported: .mp4, .mov, .webm, .mkv",
         )
-        generate_clicked = st.button(
-            "Generate QA Test Cases",
-            type="primary",
-            width="stretch",
-            disabled=uploaded_file is None,
-        )
     with info_column:
         if uploaded_file is not None:
             st.caption("Preview")
             st.video(uploaded_file, format=mime_type_for(uploaded_file.name))
         else:
             st.info("Upload a video to preview it here.")
+
+    user_instructions = _render_instructions_box(settings)
+
+    st.caption("3. Generate")
+    generate_clicked = st.button(
+        "Generate QA Test Cases",
+        type="primary",
+        width="stretch",
+        disabled=uploaded_file is None,
+        help="Sends the video plus your instructions to Gemini.",
+    )
 
     if uploaded_file is None:
         st.caption(
@@ -571,6 +681,7 @@ def _render_upload_workspace(settings: Mapping[str, Any]) -> Any:
                 "Media resolution",
                 "Thinking level",
                 "Output focus",
+                "Additional instructions",
             ],
             "Value": [
                 uploaded_file.name,
@@ -582,6 +693,11 @@ def _render_upload_workspace(settings: Mapping[str, Any]) -> Any:
                 settings["media_resolution"],
                 settings["thinking_level"],
                 settings["output_focus"],
+                (
+                    f"{len(user_instructions)} characters attached"
+                    if user_instructions
+                    else "None"
+                ),
             ],
         }
     )
@@ -846,7 +962,13 @@ def main() -> None:
             media_resolution=settings["media_resolution"],
             thinking_level=settings["thinking_level"],
             backend=settings["backend"],
-            prompt_context=settings["prompt_context"],
+            prompt_context=_build_prompt_context(
+                settings["feature_name"],
+                settings["target_roles"],
+                settings["output_focus"],
+                settings["extra_notes"],
+                st.session_state.get(SS_USER_INSTRUCTIONS, ""),
+            ),
         )
         if settings["backend"] == BACKEND_AI_STUDIO:
             credentials: AIStudioCredentials | VertexCredentials = AIStudioCredentials(

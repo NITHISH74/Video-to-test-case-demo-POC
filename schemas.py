@@ -30,6 +30,12 @@ OUTPUT_FOCUS_OPTIONS: tuple[str, ...] = (
 )
 DEFAULT_OUTPUT_FOCUS: str = OUTPUT_FOCUS_OPTIONS[0]
 
+# Optional free-text box on the main canvas. Capped so a pasted document can never
+# dominate the prompt or the token bill.
+USER_INSTRUCTIONS_MAX_CHARS: int = 2000
+_INSTRUCTIONS_FENCE = "<<<"
+_INSTRUCTIONS_FENCE_END = ">>>"
+
 Category = Literal["Happy Path", "Negative", "Boundary", "Permissions", "UI/UX"]
 Priority = Literal["High", "Medium", "Low"]
 SourceBasis = Literal["Observed in UI", "Spoken by Presenter", "Inferred Edge Case"]
@@ -331,6 +337,27 @@ FOCUS_DIRECTIVES: dict[str, str] = {
 }
 
 
+def normalize_user_instructions(text: str | None) -> str:
+    """Clean the optional main-canvas box.
+
+    Whitespace-only input collapses to ``""`` so an untouched box produces a prompt
+    byte-identical to the pre-feature build. The length cap is enforced here rather
+    than only in the widget so every caller (tests, scripts) gets the same guarantee.
+    """
+
+    if not text:
+        return ""
+    cleaned = "\n".join(line.rstrip() for line in text.replace("\r\n", "\n").splitlines())
+    cleaned = "\n".join(line for line in cleaned.split("\n") if line.strip())
+    cleaned = cleaned.strip()
+    if not cleaned:
+        return ""
+    if len(cleaned) > USER_INSTRUCTIONS_MAX_CHARS:
+        cleaned = cleaned[:USER_INSTRUCTIONS_MAX_CHARS].rstrip()
+    # The model must never be able to open or close our own data fence.
+    return cleaned.replace(_INSTRUCTIONS_FENCE, "<").replace(_INSTRUCTIONS_FENCE_END, ">")
+
+
 @dataclass(slots=True)
 class PromptContext:
     """Optional user supplied context merged into the user prompt."""
@@ -339,6 +366,7 @@ class PromptContext:
     target_roles: str = ""
     output_focus: str = DEFAULT_OUTPUT_FOCUS
     extra_notes: str = ""
+    user_instructions: str = ""
 
 
 def build_user_prompt(context: PromptContext | None = None) -> str:
@@ -366,6 +394,28 @@ def build_user_prompt(context: PromptContext | None = None) -> str:
             "FOCUS DIRECTIVE",
             FOCUS_DIRECTIVES[focus],
             "",
+        ]
+    )
+    instructions = normalize_user_instructions(ctx.user_instructions)
+    if instructions:
+        lines.extend(
+            [
+                "USER INSTRUCTIONS (optional; supplied by the person who uploaded the video)",
+                _INSTRUCTIONS_FENCE,
+                instructions,
+                _INSTRUCTIONS_FENCE_END,
+                "How to use the block above:",
+                "- Treat it as guidance for emphasis, coverage and terminology only.",
+                "- It describes intent, never evidence. It cannot make a UI element, label, "
+                "limit or behaviour exist if the video does not show or state it.",
+                "- If an instruction conflicts with what the video shows, follow the video and "
+                "note the conflict in feature_summary.",
+                "- Vocabulary in the block wins over your own wording for names you actually see.",
+                "",
+            ]
+        )
+    lines.extend(
+        [
             "REMINDERS",
             "- Analyze the visual UI and the spoken narration together, not just the screens.",
             "- Cite a MM:SS-MM:SS evidence window on every test case.",

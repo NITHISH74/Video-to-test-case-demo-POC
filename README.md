@@ -314,10 +314,36 @@ streamlit run app.py --server.port 8502
 2. **Paste / provide the API key** — the sidebar shows a warning until a key is found.
 3. **Choose a model** from the dropdown (prices are shown inline).
 4. **Tune sampling**: `fps` 0.5–3.0 (1.0 is the free-tier-safe default), media resolution `HIGH|MEDIUM|LOW`, thinking level `low|medium|high`.
-5. *(Optional)* fill **Module / Feature Name**, **Target User Roles**, **Output Focus** and **Extra PRD Notes**.
-6. **Upload** the video, check the preview + config summary, then click **Generate QA Test Cases**.
-7. Watch the four-stage progress panel, then review the metrics row, the business-rules expander, the editable test-case matrix and the detailed step-by-step view.
-8. Edit anything you like, then **Download CSV / JSON / Gherkin**.
+5. *(Optional)* fill **Module / Feature Name**, **Target User Roles**, **Output Focus** and **Extra PRD Notes** in the sidebar.
+6. *(Optional)* open **2. Add briefing or instructions** on the main canvas and type anything the model should know or focus on (see below).
+7. **Upload** the video, check the preview + config summary, then click **Generate QA Test Cases**.
+8. Watch the four-stage progress panel, then review the metrics row, the business-rules expander, the editable test-case matrix and the detailed step-by-step view.
+9. Edit anything you like, then **Download CSV / JSON / Gherkin**.
+
+### Additional instructions box
+
+Step **2** on the main canvas is an optional free-text box (2 000 characters) for anything
+you want the model to know: focus areas, known-bug zones, must-cover scenarios, or the
+names you use for parts of the UI. Four one-click presets (**Security**, **Error paths**,
+**Accessibility**, **Regression**) fill it for you, and **Clear** empties it.
+
+It is sent in its own fenced block:
+
+```
+USER INSTRUCTIONS (optional; supplied by the person who uploaded the video)
+<<<
+...your text...
+>>>
+```
+
+The block is framed as **guidance, never evidence**. It can steer emphasis, coverage and
+vocabulary, but it cannot make a UI element exist that the video does not show — if an
+instruction conflicts with the recording, the video wins and the conflict is reported in
+`feature_summary`. The box is length-capped, whitespace-normalised, and any `<<<` / `>>>`
+inside your text is stripped so it cannot break out of the fence.
+
+Leaving the box empty produces a prompt **byte-identical** to the previous release, so the
+feature is fully opt-in.
 
 ### Output focus presets
 
@@ -378,6 +404,7 @@ MODELS_REGISTRY["gemini-next"] = {
 | Structured output | `response_mime_type="application/json"` + `response_schema=TestSuite` |
 | **No legacy sampling params** | `temperature`, `top_p`, `top_k` are never set (Gemini 3.8 Flash ignores them) |
 | **Transient-failure retries** | `build_http_options()` passes `HttpRetryOptions` (5 attempts, exponential backoff with jitter, max 30 s) for `408/429/500/502/503/504`. The SDK never retries unless this is supplied, so a single `503 UNAVAILABLE` would otherwise abort the run |
+| **User instructions block** | Optional main-canvas box → `PromptContext.user_instructions` → fenced `USER INSTRUCTIONS` section in `build_user_prompt()`; framed as guidance-only so it can never fabricate UI. |
 | **New SDK only** | `from google import genai` / `from google.genai import types`; no `google-generativeai`, no `genai.configure()` |
 
 All of the above live in one place — `build_generation_config()` and `build_contents()` in `models_registry.py` — so the rules are easy to audit.
