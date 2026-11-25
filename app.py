@@ -49,6 +49,7 @@ from models_registry import (
     MODELS_REGISTRY,
     SUPPORTED_VIDEO_MIME_TYPES,
     THINKING_LEVEL_OPTIONS,
+    TransientGeminiError,
     VideoTestSuiteError,
     VertexCredentials,
     format_usd,
@@ -83,6 +84,9 @@ SS_EDITOR_VERSION = "editor_version"
 SS_ERROR = "last_error"
 SS_UPLOAD_SIGNATURE = "upload_signature"
 SS_EXPORTS = "export_payloads"
+SS_RETRYABLE = "last_error_retryable"
+SS_RETRY_NONCE = "retry_nonce"
+SS_STAGED_UPLOAD = "staged_upload"
 
 # ---------------------------------------------------------------------------
 # Session state helpers
@@ -94,6 +98,9 @@ def _init_state() -> None:
         SS_ERROR: None,
         SS_UPLOAD_SIGNATURE: "",
         SS_EXPORTS: {},
+        SS_RETRYABLE: False,
+        SS_RETRY_NONCE: 0,
+        SS_STAGED_UPLOAD: None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -180,6 +187,7 @@ def _save_tmp_video(uploaded_file: Any) -> Path:
 def _clear_result() -> None:
     st.session_state[SS_RESULT] = None
     st.session_state[SS_ERROR] = None
+    st.session_state[SS_RETRYABLE] = False
     st.session_state[SS_EDITOR_VERSION] = int(st.session_state[SS_EDITOR_VERSION]) + 1
 
 
@@ -228,9 +236,14 @@ def _run_generation(
                     gcs_uri=gcs or None,
                     progress=ExecutionProgress(on_stage=on_stage, on_detail=on_detail),
                 )
+        except TransientGeminiError as exc:
+            # Gemini was overloaded / rate limited: retrying is meaningful.
+            _finish_with_error(
+                status, pipeline, str(exc), retryable=True, status_code=exc.status_code
+            )
+            return
         except VideoTestSuiteError as exc:
             _finish_with_error(status, pipeline, str(exc))
-            _show_persistent_error()
             return
         except Exception as exc:  # noqa: BLE001 - surface unexpected SDK/network errors
             _finish_with_error(
@@ -238,7 +251,6 @@ def _run_generation(
                 pipeline,
                 f"Unexpected error while talking to Gemini: {exc}",
             )
-            _show_persistent_error()
             return
         finally:
             if tmp_path is not None:
@@ -267,18 +279,52 @@ def _run_generation(
         st.toast("Remote file and local temp copy cleaned up.", icon="\U0001F9F9")
 
 
-def _finish_with_error(status: Any, pipeline: PipelineState, message: str) -> None:
+def _finish_with_error(
+    status: Any,
+    pipeline: PipelineState,
+    message: str,
+    *,
+    retryable: bool = False,
+    status_code: int | None = None,
+) -> None:
     pipeline.write_detail(message, force=True)
-    status.update(label="Generation failed", state="error", expanded=True)
+    label = "Generation failed - Gemini is busy" if retryable else "Generation failed"
+    if status_code:
+        label = f"{label} ({status_code})"
+    status.update(label=label, state="error", expanded=True)
     st.session_state[SS_ERROR] = message
+    st.session_state[SS_RETRYABLE] = retryable
 
 
-def _show_persistent_error() -> None:
-    """Render the stored error *after* the status block so it survives reruns."""
+def _render_error_panel(*, key_suffix: str = "main") -> None:
+    """Render the error surface for a failed run (single call site per pass).
+
+    Transient failures (503/429) additionally get a **Retry now** button that
+    re-runs the pipeline with the upload stashed in session state.
+    """
 
     message = st.session_state.get(SS_ERROR)
-    if message:
+    if not message or st.session_state.get(SS_RESULT) is not None:
+        return
+
+    if not st.session_state.get(SS_RETRYABLE):
         st.error(f"Generation failed: {message}")
+        return
+
+    st.warning(f"Temporary Gemini problem - your upload is still loaded. {message}")
+    st.info(
+        "**This is on Google's side, not your setup.** The app already retried "
+        "automatically. Wait 15-30 seconds and press **Retry now**, or switch to a "
+        "lighter model in the sidebar (less congested), e.g. gemini-3.5-flash-lite."
+    )
+    retry_col, hint_col = st.columns([1, 3], vertical_alignment="center")
+    if retry_col.button("Retry now", type="primary", key=f"retry_button_{key_suffix}"):
+        st.session_state[SS_ERROR] = None
+        st.session_state[SS_RETRYABLE] = False
+        st.session_state[SS_RETRY_NONCE] = int(st.session_state.get(SS_RETRY_NONCE, 0)) + 1
+        # Clear the failure, then rerun so the pipeline starts from a clean pass.
+        st.rerun()
+    hint_col.caption("Re-runs with the same video and current sidebar settings.")
 
 
 # ---------------------------------------------------------------------------
@@ -781,6 +827,19 @@ def main() -> None:
 
     uploaded_file = _render_upload_workspace(settings)
     if uploaded_file is not None:
+        # Remember the upload so Retry keeps working on later reruns (the
+        # uploader's value is consumed the moment the user clicks Generate).
+        st.session_state[SS_STAGED_UPLOAD] = uploaded_file
+        st.session_state[SS_RETRY_NONCE] = 0
+
+    active_upload = uploaded_file if uploaded_file is not None else st.session_state.get(
+        SS_STAGED_UPLOAD
+    )
+    retry_requested = int(st.session_state.get(SS_RETRY_NONCE, 0)) > 0 and uploaded_file is None
+
+    if active_upload is not None and (uploaded_file is not None or retry_requested):
+        if retry_requested:
+            st.session_state[SS_RETRY_NONCE] = 0
         config = AnalysisConfig(
             model_id=settings["model_id"],
             fps=float(settings["fps"]),
@@ -797,10 +856,9 @@ def main() -> None:
             credentials = VertexCredentials(
                 project_id=settings["project_id"], location=settings["location"]
             )
-        _run_generation(uploaded_file, config, credentials, settings["gcs_uri"])
+        _run_generation(active_upload, config, credentials, settings["gcs_uri"])
 
-    if st.session_state[SS_ERROR] and st.session_state[SS_RESULT] is None:
-        st.error(f"Last run failed: {st.session_state[SS_ERROR]}")
+    _render_error_panel(key_suffix="main")
 
     result: AnalysisResult | None = st.session_state[SS_RESULT]
     if result is not None:

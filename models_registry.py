@@ -99,6 +99,13 @@ SUPPORTED_VIDEO_MIME_TYPES: dict[str, str] = {
 }
 MAX_DIRECT_UPLOAD_BYTES = 256 * 1024 * 1024  # 256 MB inline limit for Vertex AI
 
+# Transient-failure retries (503 high demand, 429 quota bursts, 500/502/504,
+# plus network timeouts). The SDK retries only when HttpRetryOptions is passed.
+RETRY_ATTEMPTS = 5
+RETRY_INITIAL_DELAY_SECONDS = 2.0
+RETRY_MAX_DELAY_SECONDS = 30.0
+RETRY_HTTP_STATUS_CODES = (408, 429, 500, 502, 503, 504)
+
 POLL_INTERVAL_SECONDS = 2.0
 MAX_POLL_ATTEMPTS = 150  # ~5 minutes
 MAX_POLL_INTERVAL_SECONDS = 10.0
@@ -107,6 +114,18 @@ LRO_TIMEOUT_SECONDS = 300.0
 
 class VideoTestSuiteError(Exception):
     """Raised for expected, user-facing failures (bad input, API or schema issues)."""
+
+
+class TransientGeminiError(VideoTestSuiteError):
+    """Raised when Gemini is temporarily overloaded or rate limited.
+
+    Carries the HTTP status so the UI can show tailored, actionable guidance
+    instead of a raw SDK message.
+    """
+
+    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+        super().__init__(message)
+        self.status_code = status_code
 
 
 # ---------------------------------------------------------------------------
@@ -289,6 +308,97 @@ def build_contents(video_part: types.Part, prompt: str) -> list[types.Part]:
 # ---------------------------------------------------------------------------
 # Clients
 # ---------------------------------------------------------------------------
+def build_http_options() -> types.HttpOptions:
+    """HTTP options with exponential-backoff retries for transient failures.
+
+    The ``google-genai`` SDK never retries unless ``retry_options`` is supplied
+    (its default is ``stop_after_attempt(1)``), so without this a single
+    ``503 UNAVAILABLE`` - or the 429 that follows a completed generation whose
+    response was lost - fails the whole run. Retrying here is safe: the request
+    is idempotent.
+    """
+
+    return types.HttpOptions(
+        retry_options=types.HttpRetryOptions(
+            attempts=RETRY_ATTEMPTS,
+            initial_delay=RETRY_INITIAL_DELAY_SECONDS,
+            max_delay=RETRY_MAX_DELAY_SECONDS,
+            http_status_codes=list(RETRY_HTTP_STATUS_CODES),
+        )
+    )
+
+
+_TRANSIENT_HINTS: dict[int, str] = {
+    429: (
+        "Gemini rate limit reached (429 RESOURCE_EXHAUSTED). Wait a minute and "
+        "retry, or switch to the cheaper 'gemini-3.5-flash-lite' model. The free "
+        "tier also limits requests per minute and per day."
+    ),
+    503: (
+        "Gemini is temporarily overloaded (503 UNAVAILABLE - \"high demand\"). "
+        "This is on Google's side and usually clears within seconds to minutes. "
+        "Click Generate again, or switch the model in the sidebar "
+        "(e.g. gemini-3.5-flash-lite is often less congested)."
+    ),
+    500: "Gemini had an internal error (500). Please retry in a moment.",
+    502: "Gemini's gateway returned a bad response (502). Please retry.",
+    504: "Gemini timed out (504). Try a shorter video or a lower fps.",
+}
+
+
+def describe_gemini_failure(exc: BaseException) -> str:
+    """Turn an SDK/network exception into an actionable, user-facing message."""
+
+    status = getattr(exc, "code", None)
+    try:
+        status = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status = None
+
+    if status in _TRANSIENT_HINTS:
+        return _TRANSIENT_HINTS[status]
+
+    if status in (401, 403):
+        return (
+            f"Authentication failed ({status}). Check that your GEMINI_API_KEY is "
+            "valid and has access to this model, then restart the app if you "
+            "recently changed the environment variable."
+        )
+    if status == 404:
+        return (
+            "Model not found (404). The selected model may not be available to "
+            "your API key yet - pick another model in the sidebar."
+        )
+    if status == 400:
+        detail = getattr(exc, "message", None) or str(exc)
+        return f"Gemini rejected the request (400). {detail}"
+    if status is not None and status >= 500:
+        return f"Gemini returned a server error ({status}). Please retry in a moment."
+
+    text = str(exc)
+    lowered = text.lower()
+    if any(token in lowered for token in ("timeout", "timed out", "connection", "ssl", "proxy", "temporarily")):
+        return (
+            "Network problem while contacting Gemini. Check your internet "
+            "connection, VPN or proxy, then click Generate again."
+        )
+    return f"Unexpected error while talking to Gemini: {text}"
+
+
+def is_transient_failure(exc: BaseException) -> bool:
+    """True when the failure is worth simply retrying (503/429/5xx/network)."""
+
+    status = getattr(exc, "code", None)
+    try:
+        status = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status = None
+    if status in RETRY_HTTP_STATUS_CODES:
+        return True
+    lowered = str(exc).lower()
+    return any(token in lowered for token in ("timeout", "timed out", "connection reset", "temporarily"))
+
+
 def create_ai_studio_client(credentials: AIStudioCredentials) -> genai.Client:
     api_key = (credentials.api_key or "").strip()
     if not api_key:
@@ -296,7 +406,7 @@ def create_ai_studio_client(credentials: AIStudioCredentials) -> genai.Client:
             "A GEMINI_API_KEY is required for the Free Pilot POC backend. "
             "Paste it in the sidebar or set the GEMINI_API_KEY environment variable."
         )
-    return genai.Client(api_key=api_key)
+    return genai.Client(api_key=api_key, http_options=build_http_options())
 
 
 def create_vertex_client(credentials: VertexCredentials) -> genai.Client:
@@ -308,6 +418,7 @@ def create_vertex_client(credentials: VertexCredentials) -> genai.Client:
         vertexai=True,
         project=credentials.project_id.strip(),
         location=(credentials.location or "global").strip(),
+        http_options=build_http_options(),
     )
 
 
@@ -434,6 +545,36 @@ def remove_local_temp_copy(video_path: Path | str | None) -> None:
 # ---------------------------------------------------------------------------
 # Backend runners
 # ---------------------------------------------------------------------------
+def _generate_with_guidance(
+    client: genai.Client,
+    *,
+    model: str,
+    contents: list[types.Part],
+    config: types.GenerateContentConfig,
+    progress: ExecutionProgress,
+) -> Any:
+    """Call ``generate_content`` and translate SDK failures into clear messages.
+
+    The HTTP layer already retried transient statuses (see ``build_http_options``);
+    anything reaching here has exhausted those attempts, so the user gets
+    tailored guidance instead of a raw traceback string.
+    """
+
+    try:
+        return client.models.generate_content(
+            model=model, contents=contents, config=config
+        )
+    except VideoTestSuiteError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - converted to a user-facing error
+        message = describe_gemini_failure(exc)
+        if is_transient_failure(exc):
+            progress.detail("Gemini is busy - retries exhausted, asking the user to retry.")
+            raise TransientGeminiError(
+                message, status_code=getattr(exc, "code", None)
+            ) from exc
+        raise VideoTestSuiteError(message) from exc
+
 def _run_ai_studio(
     config: AnalysisConfig,
     credentials: AIStudioCredentials,
@@ -476,10 +617,12 @@ def _run_ai_studio(
             ),
             video_metadata=types.VideoMetadata(fps=float(config.fps)),
         )
-        response = client.models.generate_content(
+        response = _generate_with_guidance(
+            client,
             model=config.model_id,
             contents=build_contents(video_part, prompt),
             config=generation_config,
+            progress=progress,
         )
         latency = time.perf_counter() - started
         progress.stage("validating", "Validating response against TestSuite schema")
@@ -550,10 +693,12 @@ def _run_vertex(
     try:
         progress.stage("processing", "Submitting request to Vertex AI")
         progress.stage("analyzing", "Analyzing video frames + presenter audio")
-        response = client.models.generate_content(
+        response = _generate_with_guidance(
+            client,
             model=config.model_id,
             contents=build_contents(video_part, prompt),
             config=build_generation_config(config),
+            progress=progress,
         )
         latency = time.perf_counter() - started
         progress.stage("validating", "Validating response against TestSuite schema")

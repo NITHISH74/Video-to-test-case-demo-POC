@@ -377,6 +377,7 @@ MODELS_REGISTRY["gemini-next"] = {
 | Thinking level | `thinking_config=types.ThinkingConfig(thinking_level=...)` with `low`/`medium`/`high` — **`minimal` is never offered or sent** |
 | Structured output | `response_mime_type="application/json"` + `response_schema=TestSuite` |
 | **No legacy sampling params** | `temperature`, `top_p`, `top_k` are never set (Gemini 3.8 Flash ignores them) |
+| **Transient-failure retries** | `build_http_options()` passes `HttpRetryOptions` (5 attempts, exponential backoff with jitter, max 30 s) for `408/429/500/502/503/504`. The SDK never retries unless this is supplied, so a single `503 UNAVAILABLE` would otherwise abort the run |
 | **New SDK only** | `from google import genai` / `from google.genai import types`; no `google-generativeai`, no `genai.configure()` |
 
 All of the above live in one place — `build_generation_config()` and `build_contents()` in `models_registry.py` — so the rules are easy to audit.
@@ -474,6 +475,7 @@ the runtime application:
 | `Gemini rejected the uploaded video during processing: …` | Corrupt/unsupported codec or audio-less weirdness — re-encode with `ffmpeg -i in.mov -c:v libx264 -c:a aac out.mp4` |
 | `Timed out waiting for Gemini to finish processing` | Very long video; lower `fps`, trim the clip, or retry |
 | `429 RESOURCE_EXHAUSTED` | Free-tier quota; switch to `gemini-3.5-flash-lite` or wait |
+| `503 UNAVAILABLE` / "This model is currently experiencing high demand" | **Not your code — Google is overloaded.** The app already auto-retries (5 attempts, exponential backoff, up to 30 s apart). If all attempts fail you get a **Retry now** button that re-runs with the same video. Also try `gemini-3.5-flash-lite`, lowering `fps`, or `LOW`/`MEDIUM` media resolution to shrink the request |
 | `The model returned JSON that does not match the TestSuite schema` | Retry, raise thinking level, or switch model (the raw preview is included in the message) |
 | `zero test cases` | Video too short / no visible UI; try `Balanced` focus or a higher thinking level |
 | `Direct inline upload is limited to 256 MB` | Use a `gs://` URI for the Vertex backend |
