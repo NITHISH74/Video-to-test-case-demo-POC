@@ -24,9 +24,8 @@ Turn a screen-recorded **software demo / walkthrough video** into a structured, 
 8. [Gemini 3.x video rules (and how this app follows them)](#gemini-3x-video-rules-and-how-this-app-follows-them)
 9. [Dual-backend execution explained](#dual-backend-execution-explained)
 10. [Data contract (Pydantic schema)](#data-contract-pydantic-schema)
-11. [Testing](#testing)
-12. [Troubleshooting](#troubleshooting)
-13. [POC limitations & production notes](#poc-limitations--production-notes)
+11. [Troubleshooting](#troubleshooting)
+12. [POC limitations & production notes](#poc-limitations--production-notes)
 
 ---
 
@@ -116,14 +115,13 @@ Videos in  ──▶  Gemini (video + audio)  ──▶  Pydantic TestSuite  ─
 
 | Concern | Decision | Why |
 |---|---|---|
-| **Separation of concerns** | `app.py` = pure UI · `models_registry.py` = Gemini I/O + registry · `schemas.py` = contract + prompts · `exporters.py` = pure transforms | Each layer is unit-testable without Streamlit or network |
+| **Separation of concerns** | `app.py` = pure UI · `models_registry.py` = Gemini I/O + registry · `schemas.py` = contract + prompts · `exporters.py` = pure transforms | UI changes never touch the Gemini layer and vice-versa |
 | **Structured output** | Pydantic `TestSuite` as `response_schema` | No JSON parsing hacks; the model *must* conform |
 | **Model switching** | Single `MODELS_REGISTRY` dict → dropdown + pricing + telemetry | Add a model in one place; UI and cost math follow |
 | **Dual backend** | One `generate_test_suite()` entry point, two internal runners | Mode A now (free), Mode B later (enterprise) without UI rewrite |
 | **Cleanup** | `finally` in both the caller *and* the app layer | Remote Gemini file and local temp copy always released, even on failure |
 | **Persistence** | `st.session_state` + versioned widget keys | Editing/downloading/rerunning never clears results |
 | **Editable table** | `st.data_editor` (dynamic rows) → re-parsed into Pydantic | Users fix model output in place; exports always match the screen |
-| **Test seam** | App calls `models_registry.generate_test_suite` (module attribute) | Real-SDK tests can patch only the client base URL, not the pipeline |
 
 ### The 4-stage progress contract
 
@@ -147,17 +145,8 @@ Video-to-test-case-demo-POC/
 ├── schemas.py                  # Pydantic models, SYSTEM_INSTRUCTION, prompt builder, normalization
 ├── exporters.py                # TestSuite ⇄ DataFrame, CSV / JSON / Gherkin generation
 ├── requirements.txt            # streamlit, google-genai, pydantic, pandas
-├── pytest.ini
 ├── .env.example                # credential template
 ├── .streamlit/config.toml      # theme + 2 GB upload limit
-├── tests/
-│   ├── conftest.py             # fake Gemini HTTP server (real SDK protocol) + fixtures
-│   ├── test_schemas.py         # schema validation, timestamps, prompts
-│   ├── test_registry.py        # registry, pricing, config rules, client construction
-│   ├── test_pipeline_integration.py  # real SDK → fake server: upload/poll/cleanup/errors
-│   ├── test_exporters.py       # table round-trip, CSV/JSON/Gherkin
-│   ├── test_app_ui.py          # AppTest: widgets, persistence, stubbed generation
-│   └── test_app_full_stack.py  # AppTest → real SDK → fake server (no stubs)
 └── README.md
 ```
 
@@ -322,7 +311,7 @@ MODELS_REGISTRY["gemini-next"] = {
 | **No legacy sampling params** | `temperature`, `top_p`, `top_k` are never set (Gemini 3.8 Flash ignores them) |
 | **New SDK only** | `from google import genai` / `from google.genai import types`; no `google-generativeai`, no `genai.configure()` |
 
-These rules are enforced by tests (`tests/test_registry.py`, `tests/test_pipeline_integration.py::test_request_wire_format_follows_gemini_3x_rules`).
+All of the above live in one place — `build_generation_config()` and `build_contents()` in `models_registry.py` — so the rules are easy to audit.
 
 ---
 
@@ -392,25 +381,19 @@ class TestSuite(BaseModel):
 
 ---
 
-## Testing
+## Verification before release
 
-The project ships **160 automated tests** — no network and no API key required.
+The pipeline was verified end to end before this repository was trimmed down to
+the runtime application:
 
-```bash
-pip install pytest
-python -m pytest            # add -v for per-test output
-```
-
-| Test file | What it proves |
+| Area | What was verified |
 |---|---|
-| `test_schemas.py` | Literal enforcement, timestamp normalization (en/em dash, `HH:MM:SS`, invalid windows), step ordering, prompt content |
-| `test_registry.py` | Registry contents & spec prices, config validation (`minimal` rejected), config never sets temperature/top_p/top_k, video-part-first ordering, cost math, client construction for both backends |
-| `test_pipeline_integration.py` | **Real `google-genai` SDK against a local fake Gemini server**: resumable upload, polling until `ACTIVE`, fail-fast on `FAILED`, `files.delete()` + temp-file cleanup in `finally`, 429 propagation, schema-mismatch handling, wire-format assertions (camelCase `videoMetadata.fps`, `mediaResolution`, `thinkingConfig`, `responseSchema`) |
-| `test_exporters.py` | DataFrame ⇄ Pydantic round-trip, dynamic-row handling (NaN/blank), CSV flattening, JSON equality with `model_dump_json`, Gherkin structure |
-| `test_app_ui.py` | `AppTest` UI: all sidebar controls & defaults, backend toggle, upload preview, generate button state, metrics row, session persistence, error states, download payloads |
-| `test_app_full_stack.py` | `AppTest` → real SDK → fake server: sidebar choices reach the HTTP request, Files API lifecycle, telemetry rendered from reported usage, reruns do not re-call the API, failure paths |
-
-The fake server in `tests/conftest.py` speaks the real protocol (`/upload/v1beta/files`, resumable finalize with `x-goog-upload-status: final`, `files.get`, `files.delete`, `models/{model}:generateContent`), so the SDK executes its actual serialization, polling and cleanup code.
+| **Schema contract** | Literal enforcement for category / priority / source basis, timestamp normalization (`0:12–0:41`, `HH:MM:SS`, invalid windows rejected), step ordering, prompt content |
+| **Model registry** | Registry contents & prices, `minimal` thinking level rejected, config never sets `temperature` / `top_p` / `top_k`, video part ordered before the prompt |
+| **Gemini wire format** | Real `google-genai` SDK against a local fake Gemini server: resumable upload, polling until `ACTIVE`, fail-fast on `FAILED`, `files.delete()` + temp-file cleanup in `finally`, 429 propagation, `videoMetadata.fps` / `mediaResolution` / `thinkingConfig` / `responseSchema` present |
+| **Editable table** | DataFrame ⇄ Pydantic round-trip, dynamic rows with blank/NaN cells, CSV flattening, JSON equality with `model_dump_json`, Gherkin structure |
+| **UI** | All sidebar controls & defaults, backend toggle, upload preview, generate-button state, telemetry row, session persistence, error states, download payloads |
+| **Full stack** | App widgets → real SDK → HTTP: sidebar choices reach the request body, Files API lifecycle, telemetry rendered from reported usage, reruns do not re-call the API |
 
 ---
 
