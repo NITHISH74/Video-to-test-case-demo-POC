@@ -1,0 +1,32 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Secrets & local config
+.env
+.streamlit/secrets.toml
+*.pem
+*.key
+
+# Models / artifacts
+models/
+*.log
+.DS_Store
+
+# Video fixtures (never commit customer walkthroughs)
+*.mp4
+*.mov
+*.webm
+*.mkv
+
+# Local scratch
+.probe/
