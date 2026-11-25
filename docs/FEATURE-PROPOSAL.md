@@ -1,6 +1,7 @@
 # Technical Approach — User Context Box + Cursor / Action Tracking
 
-Status: **proposal for review — no feature code written yet**
+Status: **Feature 1 shipped** (`eaf2c46`). Feature 2 analysed in depth — see
+[`FEATURE-2-ANALYSIS.md`](FEATURE-2-ANALYSIS.md) for the value verdict.
 Branch: `arena/99430329-video-to-test-case-demo-poc` · Base: `c802723`
 
 Two features are proposed. Feature 1 is small and low risk. Feature 2 needs a decision,

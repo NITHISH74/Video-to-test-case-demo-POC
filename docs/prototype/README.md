@@ -34,3 +34,27 @@ throughput      : ~3.9x realtime at 1280x720 @ 15 fps (16 s video -> 4.1 s)
 
 Requires no system `ffmpeg`; if an H.264 re-encode is needed,
 `imageio-ffmpeg`'s bundled binary works (verified).
+
+---
+
+## Feature 2 deep analysis scripts
+
+Used to produce the numbers in [`../FEATURE-2-ANALYSIS.md`](../FEATURE-2-ANALYSIS.md).
+
+| File | Purpose |
+|---|---|
+| `make_blind.py` | Builds `blind.mp4`: a demo containing action classes that leave **no visible trace** at 1 fps (toggle on→off, no-op click on a disabled button, identical-field focus). |
+| `measure.py` | For each action class, counts how many sampled frames land inside its evidence window, at every rate the app allows (`0.5`–`3.0` fps) plus higher ones for contrast. |
+| `probability.py` | `P(caught) = duration × fps` for realistic UI action durations; also the frame count the annotation pipeline sees at 15 fps. |
+| `ordering.py` | When two actions fall inside one sampling interval, at what gap does order become unrecoverable. |
+| `cost.py` | Token and USD cost of raising fps vs adding an action log, using this app's registry prices. |
+
+Key measured results:
+
+```
+pointer recall on blind.mp4          : 597/600 = 99.5%
+dwell events detected                : 6 / 6 real actions
+actions recovered that 1 fps cannot  : net-zero toggle, no-op click
+action log cost, 5-min demo           : +1.6% tokens (~1,350 tokens)
+raising 1 fps -> 3 fps instead        : +200% tokens, still no order/target gain
+```
