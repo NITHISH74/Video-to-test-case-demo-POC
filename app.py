@@ -308,7 +308,10 @@ def _render_sidebar() -> dict[str, Any]:
             value="",
             type="password",
             placeholder="Uses GEMINI_API_KEY env var when left empty",
-            help="Create a free key at https://aistudio.google.com/apikey",
+            help=(
+                "Create a free key at https://aistudio.google.com/apikey. "
+                "Pasting it here is the easiest option - no shell setup required."
+            ),
         )
         api_key = api_key_input.strip() or env_key
         if api_key_input.strip():
@@ -316,7 +319,42 @@ def _render_sidebar() -> dict[str, Any]:
         elif env_key:
             sidebar.caption("Using `GEMINI_API_KEY` from the environment.")
         else:
-            sidebar.warning("No API key yet - paste one above or export GEMINI_API_KEY.")
+            sidebar.warning(
+                "No API key yet - paste one above, or set GEMINI_API_KEY before "
+                "launching Streamlit."
+            )
+            with sidebar.expander("Shell setup help", expanded=False):
+                st.markdown(
+                    "\n".join(
+                        [
+                            "Set the variable **in the same terminal** you use to run "
+                            "`streamlit run app.py`:",
+                            "",
+                            "```powershell",
+                            '# Windows PowerShell\n$env:GEMINI_API_KEY = "AIza..."',
+                            "```",
+                            "",
+                            "```bat",
+                            ":: Windows CMD (no spaces around =)",
+                            "set GEMINI_API_KEY=AIza...",
+                            "```",
+                            "",
+                            "```bash",
+                            '# macOS / Linux\nexport GEMINI_API_KEY="AIza..."',
+                            "```",
+                            "",
+                            "Verify it worked:",
+                            "",
+                            "```bash",
+                            'python -c "import os; print(bool(os.environ.get(\'GEMINI_API_KEY\')))"',
+                            "```",
+                            "",
+                            "Seeing `The filename, directory name, or volume label syntax "
+                            "is incorrect.`? You used the wrong syntax for your shell - "
+                            "or simply paste the key in the field above instead.",
+                        ]
+                    )
+                )
         sidebar.caption(
             "Uploads go to the Gemini Files API, are processed remotely, then deleted "
             "together with the local temp copy."

@@ -176,7 +176,10 @@ python -m venv .venv
 source .venv/bin/activate
 
 # Windows (PowerShell)
-.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate.ps1
+
+# Windows (CMD)
+.venv\Scripts\activate.bat
 ```
 
 ### 3. Install dependencies
@@ -194,17 +197,39 @@ python -c "import google.genai, streamlit, pydantic, pandas; print('google-genai
 
 ### 4. Configure credentials
 
-**Mode A — Free Pilot POC (AI Studio)**
+**Mode A — Free Pilot POC (AI Studio)** — pick **one** of these three, easiest first:
+
+**Option 1 (recommended, no shell syntax at all):** just start the app and paste the key into the **sidebar** masked password field. Nothing is written to disk and every setting in this step becomes optional.
+
+**Option 2 (environment variable):**
 
 ```bash
-# macOS / Linux
+# macOS / Linux (bash, zsh)
 export GEMINI_API_KEY="AIza...your-key"
 
 # Windows PowerShell
-$env:GEMINI_API_KEY="AIza...your-key"
+$env:GEMINI_API_KEY = "AIza...your-key"
+
+# Windows CMD (not PowerShell)
+set GEMINI_API_KEY=AIza...your-key
 ```
 
-You can also paste the key into the sidebar at runtime (it is a masked password field and is never written to disk).
+> PowerShell variables are **session-only**. Each new terminal window needs the
+> command again — or use Option 1 / Option 3.
+
+**Option 3 (`.env` file):** copy `.env.example` to `.env`, paste your key, then load it from the terminal you will run Streamlit in:
+
+```powershell
+# Windows PowerShell
+Get-Content .env | ForEach-Object {
+  if ($_ -match '^\s*([A-Z_]+)\s*=\s*(.*)$') { Set-Item -Path "env:$($matches[1])" -Value $matches[2] }
+}
+```
+
+```bash
+# macOS / Linux
+set -a; source .env; set +a
+```
 
 **Mode B — Enterprise Vertex AI (optional)**
 
@@ -215,6 +240,49 @@ export GOOGLE_CLOUD_LOCATION="global"
 ```
 
 Then choose **Enterprise Vertex AI** in the sidebar and enter the same project ID (plus a `gs://` URI if your video is in Cloud Storage).
+
+#### Windows / PowerShell notes
+
+Windows terminals differ, and pasting the wrong shell's syntax produces errors that
+look like file problems rather than syntax problems.
+
+**Which shell am I in?** Look at the prompt:
+
+| Prompt starts with | Shell | Use this for the key |
+|---|---|---|
+| `PS C:\...>` | PowerShell | `$env:GEMINI_API_KEY = "AIza..."` |
+| `C:\...>` | CMD | `set GEMINI_API_KEY=AIza...` |
+| `user@host:~$` / `MINGW64` | Git Bash | `export GEMINI_API_KEY="AIza..."` |
+
+**Activate the venv first (PowerShell):**
+
+```powershell
+cd C:\Users\2000150947\Downloads\Video-to-test-case-demo-POC
+.\.venv\Scripts\Activate.ps1
+```
+
+If PowerShell blocks the script, allow it for the current window only:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+```
+
+**Common mistakes and the exact errors they produce:**
+
+| What you typed / did | Error you see | Fix |
+|---|---|---|
+| `export GEMINI_API_KEY=...` in PowerShell | `export : The term 'export' is not recognized...` | Use `$env:GEMINI_API_KEY = "..."` |
+| `$env:GEMINI_API_KEY="..."` in CMD | `'$env:GEMINI_API_KEY' is not recognized...` | Use `set GEMINI_API_KEY=...` |
+| `set GEMINI_API_KEY = "key"` (spaces around `=`) | `The filename, directory name, or volume label syntax is incorrect.` | No spaces: `set GEMINI_API_KEY=AIza...` |
+| Pasted `$env:...` into a plain `cmd.exe` window | `The filename, directory name, or volume label syntax is incorrect.` | Confirm the shell (`PS >` vs `C:\>`) or just use **Option 1** |
+| Ran `streamlit run app.py` without activating the venv | `streamlit : The term 'streamlit' is not recognized...` | Activate the venv, or run `python -m streamlit run app.py` |
+
+> **The error `The filename, directory name, or volume label syntax is incorrect.`
+> means the command was executed by a shell that does not understand it** — almost
+> always PowerShell syntax (`$env:`) pasted into CMD, or a key pasted directly at
+> the prompt instead of after the variable name. The app itself is fine; verify in
+> the app with `python -c "import os; print(bool(os.environ.get('GEMINI_API_KEY')))"`
+> which should print `True`.
 
 ### 5. Run the app
 
@@ -401,7 +469,8 @@ the runtime application:
 
 | Symptom | Cause / fix |
 |---|---|
-| `No API key was provided` | Paste the key in the sidebar or `export GEMINI_API_KEY=...`; restart the terminal/app after exporting |
+| `No API key was provided` | Easiest: paste it in the sidebar password field. Or set the env var for **your** shell (`$env:GEMINI_API_KEY="..."` in PowerShell, `set GEMINI_API_KEY=...` in CMD, `export GEMINI_API_KEY=...` in bash) **before** launching Streamlit |
+| `The filename, directory name, or volume label syntax is incorrect.` | Shell syntax mismatch — you pasted `$env:...` into CMD (or `set`/`export` into the wrong shell). See [Windows / PowerShell notes](#windows--powershell-notes), or just paste the key into the sidebar |
 | `Gemini rejected the uploaded video during processing: …` | Corrupt/unsupported codec or audio-less weirdness — re-encode with `ffmpeg -i in.mov -c:v libx264 -c:a aac out.mp4` |
 | `Timed out waiting for Gemini to finish processing` | Very long video; lower `fps`, trim the clip, or retry |
 | `429 RESOURCE_EXHAUSTED` | Free-tier quota; switch to `gemini-3.5-flash-lite` or wait |
