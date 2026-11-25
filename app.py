@@ -511,9 +511,6 @@ def _render_sidebar() -> dict[str, Any]:
         "fps": fps,
         "media_resolution": media_resolution,
         "thinking_level": thinking_level,
-        "prompt_context": _build_prompt_context(
-            feature_name, target_roles, output_focus, extra_notes
-        ),
         "feature_name": feature_name,
         "target_roles": target_roles,
         "output_focus": output_focus,
@@ -563,7 +560,7 @@ def _apply_preset(preset_text: str) -> None:
     st.session_state[SS_USER_INSTRUCTIONS] = preset_text
 
 
-def _render_instructions_box(settings: Mapping[str, Any]) -> str:
+def _render_instructions_box() -> str:
     """Render the optional free-text box above the Generate button.
 
     Returns the normalised text. This is the single source of truth for the feature;
@@ -600,7 +597,7 @@ def _render_instructions_box(settings: Mapping[str, Any]) -> str:
             label_visibility="collapsed",
         )
         presets = st.columns(len(FOCUS_PRESETS))
-        for column, (name, preset_text) in zip(presets, FOCUS_PRESETS.items()):
+        for column, (name, preset_text) in zip(presets, FOCUS_PRESETS.items(), strict=True):
             with column:
                 st.button(
                     name,
@@ -641,7 +638,7 @@ def _render_upload_workspace(settings: Mapping[str, Any]) -> Any:
         else:
             st.info("Upload a video to preview it here.")
 
-    user_instructions = _render_instructions_box(settings)
+    user_instructions = _render_instructions_box()
 
     st.caption("3. Generate")
     generate_clicked = st.button(

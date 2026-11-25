@@ -331,16 +331,18 @@ It is sent in its own fenced block:
 
 ```
 USER INSTRUCTIONS (optional; supplied by the person who uploaded the video)
-<<<
+<<<USER_INSTRUCTIONS
 ...your text...
->>>
+USER_INSTRUCTIONS>>>
 ```
 
 The block is framed as **guidance, never evidence**. It can steer emphasis, coverage and
 vocabulary, but it cannot make a UI element exist that the video does not show — if an
 instruction conflicts with the recording, the video wins and the conflict is reported in
-`feature_summary`. The box is length-capped, whitespace-normalised, and any `<<<` / `>>>`
-inside your text is stripped so it cannot break out of the fence.
+`feature_summary`. The box is length-capped, whitespace-normalised, and the distinctive
+`<<<USER_INSTRUCTIONS` / `USER_INSTRUCTIONS>>>` markers are stripped from your text so it
+cannot break out of the fence. Plain `<<<` / `>>>` are left alone, because they are
+legitimate text (REPL prompts, shell redirection).
 
 Leaving the box empty produces a prompt **byte-identical** to the previous release, so the
 feature is fully opt-in.

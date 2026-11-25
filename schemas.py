@@ -33,8 +33,10 @@ DEFAULT_OUTPUT_FOCUS: str = OUTPUT_FOCUS_OPTIONS[0]
 # Optional free-text box on the main canvas. Capped so a pasted document can never
 # dominate the prompt or the token bill.
 USER_INSTRUCTIONS_MAX_CHARS: int = 2000
-_INSTRUCTIONS_FENCE = "<<<"
-_INSTRUCTIONS_FENCE_END = ">>>"
+# Fence for the instruction block. Longer than any run a user is likely to type, and
+# stripped from user text, so the block cannot be escaped from inside.
+_INSTRUCTIONS_FENCE = "<<<USER_INSTRUCTIONS"
+_INSTRUCTIONS_FENCE_END = "USER_INSTRUCTIONS>>>"
 
 Category = Literal["Happy Path", "Negative", "Boundary", "Permissions", "UI/UX"]
 Priority = Literal["High", "Medium", "Low"]
@@ -354,8 +356,9 @@ def normalize_user_instructions(text: str | None) -> str:
         return ""
     if len(cleaned) > USER_INSTRUCTIONS_MAX_CHARS:
         cleaned = cleaned[:USER_INSTRUCTIONS_MAX_CHARS].rstrip()
-    # The model must never be able to open or close our own data fence.
-    return cleaned.replace(_INSTRUCTIONS_FENCE, "<").replace(_INSTRUCTIONS_FENCE_END, ">")
+    # Only the distinctive fence markers are stripped. Plain "<<<" / ">>>" stay
+    # untouched because they are legitimate text (REPL prompts, shell redirection).
+    return cleaned.replace(_INSTRUCTIONS_FENCE, "").replace(_INSTRUCTIONS_FENCE_END, "")
 
 
 @dataclass(slots=True)
