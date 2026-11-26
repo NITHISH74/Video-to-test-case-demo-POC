@@ -2,6 +2,16 @@
 
 Research date: **2026-11-25**. Prices and product status change; re-verify before quoting a client.
 
+> **Corrected 2026-11-25.** Three errors in the first draft are fixed below, and the
+> authoritative cost figures now live in
+> [`COST-5MIN-VIDEO-AZURE-VS-GEMINI.md`](COST-5MIN-VIDEO-AZURE-VS-GEMINI.md):
+>
+> 1. Tensai production runs on **Vertex AI with a service-account JSON key**, not AI Studio.
+>    Vertex prices are used throughout, including the **2027-01-01 doubling**.
+> 2. The GPT side means the **whole 5.x/6.x family** — none of which accept video input.
+> 3. **Video Indexer does understand video** (OCR, scenes, transcript). My "never sees pixels"
+>    claim was wrong. See §2 and the corrected scorecard in the cost document.
+
 Question from the team: *"Most clients have Azure resources, not Vertex AI. Should we build the
 Azure method (Video Indexer + GPT-5) instead?"*
 
@@ -11,48 +21,51 @@ Azure method (Video Indexer + GPT-5) instead?"*
 
 | Claim | Verdict |
 |---|---|
-| "We must switch to Azure because clients lack Vertex" | **Premise is partly wrong.** See §1 — the app's default backend needs no Vertex at all. |
-| Teammate's method: **Video Indexer + GPT-5** | **Not viable as stated.** GPT-5 has no video input, and Video Indexer's LLM features never see pixels. See §2. |
+| "We must switch to Azure because clients lack Vertex" | **Valid commercial driver, not a technical one.** Tensai ships on Vertex; some clients will not accept Google at all. See §1. |
+| Teammate's method: **Video Indexer + GPT-5** | **Viable as a feeder, not as a replace­ment.** No GPT-5.x/6.x model accepts video, so frames must be extracted; VI's OCR is genuinely good. But neither returns UI *state*. See §2. |
 | Is Azure capable of this at all? | **Yes** — but with **Content Understanding**, not Video Indexer, and with a **512×512 frame cap** that hurts UI demos. See §4–5. |
 | Output quality: Azure vs Gemini | **Gemini is ahead for screen-recording UI demos.** Not by a landslide, and not for the reasons usually given. See §5. |
-| Cost | **Azure ≈ 4× more expensive per hour of video.** See §6. |
+| Cost (5-min video) | **Gemini $0.078 vs Azure $0.370 — ~4.7× today, ~2.4× from 2027-01-01.** See [`COST-5MIN-VIDEO-AZURE-VS-GEMINI.md`](COST-5MIN-VIDEO-AZURE-VS-GEMINI.md). |
 | What should we actually build? | **A third backend, not a replacement.** The code is already structured for it. See §8. |
 
 **Bottom line:** the senior's *commercial* instinct is sound — support Azure because that is
-where client budget and compliance live. The *technical* plan in the room is wrong on two
-counts and would produce a worse product for more money if built as described.
+where client budget and compliance live. The *technical* plan in the room is still wrong on one
+count (no GPT in the 5.x/6.x line accepts video, so frames must be extracted) and under-weighted
+on another (Content Understanding's 512×512 frame cap). It would also cost roughly **4.7× more
+per video today, 2.4× more from 2027**. Build it as a third backend, not a replacement.
 
 ---
 
-## 1. First, correct the premise: Vertex is not the only Gemini path
+## 1. POC and production run on different Gemini backends — both are real
 
-The app has **two** backends, and Vertex is the *second* one:
+| | **POC / demo** | **Tensai production** |
+|---|---|---|
+| Backend | AI Studio | **Vertex AI** |
+| Auth | `GEMINI_API_KEY` | **Service-account JSON** |
+| Tier | **Free tier** | Subscription |
+| Data | **Free tier trains on your data** | Not used for training |
 
-| Backend | What the client needs | Auth | Free tier |
-|---|---|---|---|
-| **Free Pilot (AI Studio)** — *the default* | **Just an API key** | `GEMINI_API_KEY` | Yes |
-| Enterprise (Vertex AI) | GCP project, IAM, billing | Service account / ADC | No |
+Both backends exist in the app and both are legitimate. The important consequence for this
+document is a **pricing** one: **Tensai bills at Vertex rates, not AI Studio rates**, and Vertex
+prices for Gemini 3.8 Flash **double on 1 January 2027**. Every cost figure below uses Vertex
+pricing. See [`COST-5MIN-VIDEO-AZURE-VS-GEMINI.md`](COST-5MIN-VIDEO-AZURE-VS-GEMINI.md).
 
-So *"the client has no Vertex AI"* does **not** mean *"the client cannot use Gemini."* They can
-use the AI Studio backend today with a key and no GCP project at all.
+**The Azure driver is therefore commercial, not technical.** A client may:
 
-**The legitimate version of the concern** is different, and worth taking seriously:
+- ban Google outright on compliance grounds;
+- want the spend on an Azure Enterprise Agreement / MACC they already committed to;
+- already satisfy data-residency and DPA requirements inside their Azure tenant;
+- simply prefer one vendor.
 
-- A client may ban Google entirely on compliance grounds, not just Vertex.
-- Many enterprises will not sign off on an AI Studio API key as a production credential —
-  the **free tier trains on your data**; the paid tier does not. That distinction is exactly
-  what pushes enterprise buyers to Vertex or to Azure.
-- Clients with an Azure Enterprise Agreement want the spend on the MACC they already committed to.
-- Data-residency and DPA requirements are often already satisfied inside the client's Azure tenant.
-
-**So: challenge the premise, but accept the underlying driver.** The real ask is *"support our
-cloud,"* not *"abandon Gemini."*
+None of that is a technical objection to Gemini. It is a procurement requirement — and it is
+a completely valid reason to build the Azure path. **Support both; do not pretend one is
+technically necessary or unnecessary.**
 
 ---
 
 ## 2. The teammate's method has two technical faults
 
-### Fault 1 — GPT-5 has no video input
+### Fault 1 — No model in the GPT-5.x or 6.x family accepts video input
 
 From OpenAI's own model page for `gpt-5`:
 
@@ -64,28 +77,41 @@ Modalities
   Video   Not supported
 ```
 
-`gpt-5` is also now marked **Deprecated**. The current flagships (GPT-6.2 Astra / Sol, GPT-6.1
-Terra, GPT-6 Luna) are all **text + image input, text output** — no video modality anywhere in
-the API.
+`gpt-5` is also now marked **Deprecated** — but the conclusion holds across the entire current
+family, which is the relevant point: `gpt-5.5`, `gpt-5.6-sol` / `-terra` / `-luna`,
+`gpt-6.2-astra` / `-sol`, and `gpt-6.1-terra` are **all text + image input, text output**.
+
+From the `gpt-6.2-astra` model page: *"Audio: Not supported. Video: Not supported."*
+
+So the teammate's idea is viable in spirit — a frontier GPT reading frames is a real
+architecture — but it requires **our own frame extractor**, not "attach the video." 
 
 **Consequence:** "attach the video to GPT-5" is not a thing you can do. Any GPT-based pipeline
 requires *you* to extract frames and transcribe audio yourself, then send images + text. That is
 a frame-stack workaround, not native video understanding — and it is the single biggest quality
 gap versus Gemini, which ingests video natively with interleaved audio.
 
-### Fault 2 — Video Indexer's LLM features never see the video
+### Fault 2 — Video Indexer understands video, but only through a fixed catalogue
 
-Azure AI **Video Indexer** is an *insight catalog*: upload → index → poll → get a fixed-taxonomy
-JSON (who spoke, what they said, on-screen text, topics, scenes). Its generative features run
-**on the extracted insight text, not on the pixels.**
+**Correction:** my first draft said VI's LLM features "never see the pixels". That was wrong.
 
-Two practical consequences:
+Azure AI **Video Indexer** runs real visual models: **OCR on on-screen text** across the timeline
+(with temporal error-correction), scene and shot segmentation, keyframes, labels identification,
+face detection, topics and sentiment from speech *and* visual text, plus generative summaries.
+It genuinely understands video.
 
-- If the fixed taxonomy didn't capture it, **no later LLM can find it**. You cannot ask VI a
-  question its models weren't built to answer.
-- Video Indexer is a **legacy-adjacent** product: its Azure Media Services dependency was retired
-  (classic accounts retired 2024-06-30), and Microsoft's current guidance points new video work
-  at **Content Understanding**, not Video Indexer.
+The accurate limitation is different, and narrower:
+
+- It answers **"what is in this file"** through a **fixed catalogue of models**. It is not built
+  to answer "was the Save button disabled when the presenter clicked it?" OCR gives you **text**,
+  not **state** — a disabled button and an enabled button have identical labels.
+- Video Indexer remains **legacy-adjacent**: its Azure Media Services dependency was retired
+  (classic accounts retired 2024-06-30), and Microsoft's current guidance for new video work is
+  **Content Understanding**.
+
+So VI is a stronger option than I first represented — particularly its **full-resolution OCR**,
+which may read UI text better than a downscaled Gemini frame. It is simply a *different*
+capability from native video understanding, not a lesser version of it.
 
 **So "Video Indexer + GPT-5" is the wrong pairing of two wrong parts.** The correct Azure
 pairing is **Content Understanding + a current GPT model.**
@@ -220,7 +246,16 @@ Do not overstate the Gemini advantage:
 
 ---
 
-## 6. Cost — Azure is roughly 4× more expensive
+## 6. Cost — see the corrected, official-rate calculation
+
+> The first draft of this section used AI Studio rates and a rounded estimate. It has been
+> **replaced** by [`COST-5MIN-VIDEO-AZURE-VS-GEMINI.md`](COST-5MIN-VIDEO-AZURE-VS-GEMINI.md),
+> which uses Vertex AI rates, official Azure meters, and the 2027 price step.
+>
+> **Summary: 5-minute video — Gemini 3.8 Flash on Vertex $0.078; Azure CU + GPT-6.2 Sol $0.370.
+> Ratio ~4.7× today, ~2.4× from 2027-01-01.**
+
+### Superseded draft numbers (kept for traceability)
 
 All figures are **per 1 hour of video**, input-side only, using published list prices on
 2026-11-25. Excludes taxes, EA discounts and retries.
