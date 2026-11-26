@@ -1,0 +1,35 @@
+{
+  "_comment": "Copy to config.json and edit. Every run costs real money - start with --dry-run.",
+  "pipelines": [
+    {
+      "name": "Gemini 3.8 Flash @ HIGH 1fps",
+      "kind": "gemini",
+      "model": "gemini-3.8-flash",
+      "media_resolution": "HIGH",
+      "thinking_level": "high",
+      "fps": 1.0,
+      "backend": "ai_studio"
+    },
+    {
+      "name": "Gemini 3.8 Flash @ LOW 1fps (resolution control)",
+      "kind": "gemini",
+      "model": "gemini-3.8-flash",
+      "media_resolution": "LOW",
+      "thinking_level": "high",
+      "fps": 1.0,
+      "backend": "ai_studio"
+    },
+    {
+      "name": "VI Standard + GPT-6.2 Sol",
+      "kind": "vi",
+      "vi_preset": "standard",
+      "llm_model": "gpt-6.2-sol"
+    },
+    {
+      "name": "VI Basic + GPT-6.2 Sol (optional)",
+      "kind": "vi",
+      "vi_preset": "basic",
+      "llm_model": "gpt-6.2-sol"
+    }
+  ]
+}

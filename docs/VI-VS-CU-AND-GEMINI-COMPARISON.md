@@ -105,13 +105,15 @@ Straight from the Azure Architecture Center "use / don't use" tables:
 
 | ✅ Advantages | ❌ Disadvantages |
 |---|---|
-| **Best OCR available** — native resolution, not downscaled. Reads UI text Gemini cannot. | **Fixed taxonomy.** Cannot ask it for "test steps." No schema input. |
+| **Best OCR available** — native resolution, not downscaled. More reliable than Gemini at LOW/ MEDIUM resolution. | **Fixed taxonomy.** Cannot ask it for "test steps." No schema input. |
 | **16-speaker diarization**, 50+ languages, translation, captions. | **Still needs a second LLM call** to produce test cases → you pay twice. |
 | **Deep, structured, deterministic** insights — traceable to source. | **Most expensive Azure route.** $0.288 per 5 min at Basic, before any LLM. |
-| **Runs inside the client's Azure tenant** — MACC, DPA, residency satisfied. | **Legacy-adjacent.** Built on Azure Media Services (classic accounts retired 2024-06-30). |
+| **Runs inside the client's Azure tenant** — MACC, DPA, residency satisfied. | **Still ~5x Gemini's cost** at any preset. |
 | **Azure Arc edge deployment** for strict data residency. | **Async upload → index → poll** pipeline. Slow and stateful to operate. |
 | **Live stream** support (irrelevant to us, real for others). | **OCR gives text, not state** — disabled and enabled buttons read identically. |
 | | Object/OCR output is a **generic index**, not shaped for `TestSuite`. |
+| **Actively developed** — Media Services retired 2024-06-30 and its analysis workloads were *migrated to* VI; it now runs independently, cloud and Arc. | |
+| **Actively developed** — Media Services retired 2024-06-30 and its analysis workloads were migrated *to* VI, which now runs independently (cloud + Arc). | |
 
 ### Azure Content Understanding (CU)
 
@@ -165,9 +167,10 @@ economics assume a reuse pattern we don't have.
 **Recommended: Gemini for reasoning + Azure OCR as a sidecar.** Best output, cheapest, and still
 gives Tensai a genuine Azure component in the architecture diagram.
 
-**Do not build VI as the primary pipeline.** It is the most expensive option, it is built on a
-retired-media-services lineage, it cannot express test steps, and it still needs an LLM. It is
-excellent at OCR — use it for exactly that, and nothing more.
+**Do not build VI as the primary pipeline.** It is the most expensive option, it cannot express
+test steps, and it still needs an LLM. It is a healthy, actively developed service — the Media
+Services retirement *fed into* VI rather than endangering it — but it solves indexing, not test
+generation.
 
 ---
 

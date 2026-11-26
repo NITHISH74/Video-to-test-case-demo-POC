@@ -105,9 +105,10 @@ The accurate limitation is different, and narrower:
 - It answers **"what is in this file"** through a **fixed catalogue of models**. It is not built
   to answer "was the Save button disabled when the presenter clicked it?" OCR gives you **text**,
   not **state** — a disabled button and an enabled button have identical labels.
-- Video Indexer remains **legacy-adjacent**: its Azure Media Services dependency was retired
-  (classic accounts retired 2024-06-30), and Microsoft's current guidance for new video work is
-  **Content Understanding**.
+- Video Indexer is **not** a legacy product. Media Services retired 2024-06-30, but its on-demand
+  analysis workloads were **migrated to VI**, whose AMS dependency was removed beforehand; VI now
+  runs independently and is under active development (cloud + Azure Arc). Redacting my earlier
+  "legacy-adjacent" characterisation.
 
 So VI is a stronger option than I first represented — particularly its **full-resolution OCR**,
 which may read UI text better than a downscaled Gemini frame. It is simply a *different*
