@@ -159,6 +159,24 @@ Now add the model. This is where the GPT series choice dominates:
 
 Rates: [Azure OpenAI pricing](https://azure.microsoft.com/en-us/pricing/details/azure-openai/).
 
+### Video Indexer — official per-minute rates (found after the first draft)
+
+VI is billed **per input minute**, with audio and video charged **separately**
+([VI pricing](https://azure.microsoft.com/en-us/pricing/details/video-indexer/)):
+
+| Preset | Video / min | Audio / min | **5-min total (both)** |
+|---|---|---|---|
+| Basic | $0.045 | $0.0126 | **$0.288** |
+| Standard | $0.090 | $0.024 | **$0.570** |
+| Advanced | $0.150 | $0.040 | **$0.950** |
+
+Add the LLM on top (VI returns an index, not test cases). With GPT-6.2 Sol at $0.120:
+**VI Basic + Sol = $0.408 per 5-min video.**
+
+**VI is therefore the most expensive Azure route** — more than Content Understanding, and 5.2×
+Gemini. Its pricing assumes indexing a library once and searching it forever; we make a fresh
+suite per video and never search it.
+
 ### Side by side — 5-minute video, production configuration
 
 | Option | Configuration | **Cost / 5 min** | Relative |
@@ -170,6 +188,9 @@ Rates: [Azure OpenAI pricing](https://azure.microsoft.com/en-us/pricing/details/
 | Azure CU + GPT-6 Luna | cheapest GPT | $0.256 | 3.3× |
 | Azure CU + GPT-6.2 Astra | frontier GPT | $0.730 | 9.4× |
 | Azure CU + GPT-5.5 (the series you asked about) | — | $0.573 | 7.3× |
+| **VI Basic + GPT-6.2 Sol** | teammate's proposed route | **$0.408** | **5.2×** |
+| VI Standard + Sol | richer VI insights | $0.690 | 8.8× |
+| VI Advanced + Sol | full VI catalogue | $1.070 | 13.7× |
 
 **Headline: Gemini 3.8 Flash on Vertex ≈ $0.078 per 5-minute video.
 Azure CU + a comparable GPT ≈ $0.37. Ratio ≈ 4.7×.**
@@ -259,7 +280,7 @@ a QA engineer needs.
 | Temporal order of rapid actions | Fair (1 fps limit) | Poor | Poor |
 | Structured schema output | **Excellent** | Limited | **Excellent** |
 | Determinism / traceability | Fair | **Excellent** | Fair |
-| Cost per 5 min | **$0.078** | Content-only, no LLM | $0.37 |
+| Cost per 5 min | **$0.078** | $0.408 (incl. LLM) | $0.370 |
 
 **Nobody wins outright.** Gemini is the best single-call fit for our task. Azure's OCR is
 better at the one thing we care about most (reading UI text). That suggests something better
